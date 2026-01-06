@@ -10,8 +10,13 @@ This is a simulation and control systems project for a self-balancing robot. I s
 - Plotting and animation using Matplotlib
 
 ## Simulations
-![LQR Simulation](simulation_gifs/LQRsimulation.gif)
-![PID Simulation](simulation_gifs/PIDsimulation.gif)
+LQR Simulation:
+
+![LQR Simulation](simulation_gifs/LQR.gif)
+
+PID Simulation:
+
+![PID Simulation](simulation_gifs/PID.gif)
 
 ## Requirements
 
