@@ -1,0 +1,69 @@
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.animation import FuncAnimation
+from scipy.integrate import solve_ivp
+import control as ct
+from scipy.linalg import solve_continuous_are
+import control as ct 
+
+G = 9.81
+
+A = np.array([[0, 1, 0, 0],[0, 0, -18.561, 0], [0, 0, 0, 1], [0, 0, 370.04, 0]])
+B = np.array([[0],[134.795], [0], [-2034.736]])
+Q = np.diag([5, 0, 40, 15])
+R = np.array([[5]])
+
+P = solve_continuous_are(A, B, Q, R)
+K = np.linalg.inv(R) @ B.T @ P
+print(K)
+
+print (ct.lqr(A, B, Q, R))
+
+x0 = np.array([0, 0, 1, 0])
+
+def closed_loop_dynamics(t, x):
+    u = -K @ x
+    u_max = np.clip(u, -0.2550*2, 0.2550*2)
+    dxdt = A @ x + B @ u_max
+    return dxdt
+
+t_span = (0, 10)
+t_eval = np.linspace(*t_span, 1000)
+
+# Solve ODE
+sol = solve_ivp(closed_loop_dynamics, t_span, x0, t_eval=t_eval)
+
+x_vals = sol.y[0]
+theta_vals = sol.y[2]
+t_vals = sol.t
+
+rectangle_width = 0.01
+ax_width = 2
+
+fig, ax = plt.subplots()
+
+ax.set_xlim(-ax_width, ax_width)
+ax.set_ylim(0, ax_width)
+ax.set_aspect('equal')
+
+rect = patches.Rectangle((0, 0), rectangle_width * 2, 0.15, fc='blue')
+ax.add_patch(rect)
+
+def update(frame): # update each frame of the simulation based on the values in the array
+        curr_x = x_vals[frame]
+        curr_theta = theta_vals[frame]
+
+        rect.set_xy((curr_x, 0.0325))
+        rect.set_angle(np.degrees(-curr_theta))
+
+        ax.set_title(f"frame: {frame}, time: {t_vals[frame]}")
+
+ani = FuncAnimation(fig, update, frames=len(t_vals),
+                            repeat=True, interval=1000 * (t_vals[1] - t_vals[0]))
+
+ani.save("LQR.gif", writer='pillow', fps=30)
+
+
+plt.show()

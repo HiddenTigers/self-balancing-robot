@@ -1,0 +1,262 @@
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.animation import FuncAnimation
+from scipy.integrate import solve_ivp
+
+G = 9.81
+
+class Motor:
+    def __init__(self, rpm1, kgcmtorque1, rpm2, kgcmtorque2, max_torque):
+        # CODE CLIPPING MAX TORQUE BASED ON RPM:
+
+        # self.radps1 = rpm1 * 2 * np.pi / 60
+        # self.radps2 = rpm2 * 2 * np.pi / 60
+        # self.torque1 = kgcmtorque1 * 9.81 / 100 * 2
+        # self.torque2 = kgcmtorque2 * 9.81 / 100 * 2 # multiply for two motors
+
+        # compute the line
+        # y1 = self.torque1
+        # y2 = self.torque2
+        # x1 = self.radps1
+        # x2 = self.radps2
+        # self.m = (y1 - y2) / (x1 - x2)
+        # self.c = y1 - (self.m * x1)
+
+        self.max_torque = max_torque
+
+
+    
+    # def get_max_abs_torque(self, ang_vel):
+    #     return self.m * np.abs(ang_vel) + self.c
+
+
+motor_12V_530RPM = Motor(530, 0, 407, 0.67, 0.2550) #MAX TORQUE OF ONE MOTOR  
+motor_12V_333RPM = Motor(333, 0, 250, 1.00,0)
+motor_12V_1000RPM = Motor(1000, 0, 770, 0.4,0)
+motor_6V_265RPM = Motor(265, 0, 203.5, 0.33,0)
+
+class Simulation:
+    def __init__(self, time_total=0.5, mass_rod=0.7, mass_wheel=0.025, length_rod=0.15,
+                 wheel_radius=0.0325, com = 1/2, x_0=0, xdot_0=0, theta_0=0, thetadot_0=0, rod_moi=0,
+                 motor=motor_12V_530RPM, motor_torque_safety_margin=0.8):
+        self.dt = 0.0001
+        self.time_total = time_total
+        self.mass_rod = mass_rod
+        self.mass_wheel = mass_wheel
+        self.length_rod = length_rod       
+        self.wheel_radius = wheel_radius
+        self.com = com
+        self.rodmoi = rod_moi
+
+        self.motor_torque_safety_margin = motor_torque_safety_margin
+        self.motor = motor
+
+        # if rod_moi < mass_rod*(com*length_rod)**2:
+        #     ValueError("the moment of inertia of the rod is lower than physically possible")
+
+        self.num_steps = int(self.time_total / self.dt)
+
+        self.timespan = (0 , time_total)
+        self.time = np.linspace(0, time_total, self.num_steps)
+        self.x = None
+        self.xdot = None
+        self.theta = None
+        self.thetadot = None
+
+        self.torque = None
+        self.pwm = None
+
+        # self.x[0] = x_0
+        # self.xdot[0] = xdot_0
+        # self.theta[0] = theta_0
+        # self.thetadot[0] = thetadot_0
+
+        self.initialconditions = [x_0, xdot_0, theta_0, thetadot_0]
+
+    def calculate_pwm(self, torque):
+            """Compute the PWM based on the requested torque."""
+            onemotor = torque/2
+            if torque>0:
+                return -3987.12398*onemotor**2 + 1919.16039*onemotor + 18.1126
+            elif torque <0:
+                return -(-3987.12398*onemotor**2 - 1919.16039*onemotor + 18.1126)
+            else: 
+                return 0
+
+    def _compute_torque(self, xdot, theta, thetadot, kp, ki, kd):
+        torque_wheel = kp * theta + kd * thetadot 
+        torque_wheel = np.clip(torque_wheel, -self.motor.max_torque*2* self.motor_torque_safety_margin, self.motor.max_torque*2* self.motor_torque_safety_margin)
+        #max_torque = self.motor.get_max_abs_torque(xdot / self.wheel_radius) * self.motor_torque_safety_margin
+        #torque_wheel = np.clip(torque_wheel, -max_torque, max_torque)
+
+        pwm = self.calculate_pwm(torque_wheel)
+
+        return torque_wheel
+
+    def dynamics(self, t, y, kp, ki, kd): # calculate the derivates and double derivates using differential equations
+        x, xdot, theta, thetadot = y
+        torque_wheel = self._compute_torque(xdot, theta, thetadot, kp, ki, kd)
+
+        a = np.array ([[(self.length_rod*self.com*self.mass_rod*np.cos(theta)),(1/3*self.mass_rod*self.length_rod**2)],
+                     [((3/2)*self.mass_wheel+self.mass_rod),(self.length_rod*self.com*self.mass_rod*np.cos(theta))]])
+        b = np.array([(-torque_wheel+self.mass_rod*G*np.sin(theta)*self.length_rod*self.com),((torque_wheel/self.wheel_radius) + self.length_rod*self.com*self.mass_rod*np.sin(theta)*thetadot**2)])
+        
+        vals = np.linalg.solve(a,b)
+
+        x2dot = vals[0]
+        theta2dot = vals[1]
+
+        ydot = [xdot, x2dot, thetadot, theta2dot]
+
+        return ydot
+    
+    def run_simulationmanual(self, kp, ki, kd): # run the simulation thorugh manual integration
+        raise NotImplementedError()
+        # for i in range (0, self.num_steps-1):
+        #     xdot, x2dot, thetadot, theta2dot = self.dynamics(0 ,[self.x[i], self.xdot[i], self.theta[i], self.thetadot[i]], kp, ki, kd)
+            
+        #     self.x[i+1] = self.x[i] + self.dt * xdot
+        #     self.xdot[i+1] = self.xdot[i] + self.dt * x2dot
+        #     self.theta[i+1] = self.theta[i] + self.dt * thetadot
+        #     self.thetadot[i+1] = self.thetadot[i] + self.dt * theta2dot
+
+    def run_simscipy(self, kp, ki, kd): # run the simulation using scipy
+        solution = solve_ivp(self.dynamics, self.timespan, self.initialconditions, t_eval=self.time, args=(kp,ki,kd))
+        print(solution.message)
+        self.x = solution.y[0]
+        self.xdot = solution.y[1]
+        self.theta = solution.y[2]
+        self.thetadot = solution.y[3]
+
+        self.time = solution.t
+        self.num_steps = len(self.time)
+
+    def torquescalculation(self, kp, ki, kd):
+        self.torque = np.zeros((self.num_steps, ))
+        self.pwm = np.zeros((self.num_steps, ))
+        # print(self.torque.shape)
+        for i in range (0, len(self.theta)):
+            self.torque[i] = self._compute_torque(self.xdot[i], self.theta[i], self.thetadot[i], kp, ki, kd)
+            self.pwm[i] = self.calculate_pwm(self.torque[i])
+
+
+class PlottingOptions:
+    def __init__(self): # declare the width of the robot and the width of the axis
+        self.rectangle_width = 0.01
+        self.ax_width = 2
+
+def linear_equation(speed, m=1, c=0):
+    return m * speed + c
+
+class Simulation_plotter:
+    def __init__(self, simulation, plot_options):
+        self.simulation = simulation
+        self.plot_options = plot_options
+
+    def update(self, frame): # update each frame of the simulation based on the values in the array
+        curr_x = self.simulation.x[frame]
+        curr_theta = self.simulation.theta[frame]
+
+        self.rect.set_xy((curr_x, self.simulation.wheel_radius))
+        self.rect.set_angle(np.degrees(-curr_theta))
+
+        self.ax.set_title(f"frame: {frame}, time: {self.simulation.time[frame]}")
+
+    def create_animation(self):
+        self.fig, self.ax = plt.subplots()
+
+        self.ax.set_xlim(-self.plot_options.ax_width, self.plot_options.ax_width)
+        self.ax.set_ylim(0, plot_options.ax_width)
+        self.ax.set_aspect('equal')
+
+        self.rect = patches.Rectangle((0, 0), plot_options.rectangle_width * 2, self.simulation.length_rod, fc='blue')
+        self.ax.add_patch(self.rect)
+        ani = FuncAnimation(self.fig, self.update, frames=range(0, self.simulation.num_steps, 10),
+                            repeat=False, interval=20)
+
+        ani.save("PID.gif", writer='pillow', fps=30)
+
+        plt.show()
+
+
+    def plot_results(self): # plot the results on a graph as a function of time
+        plt.figure(figsize=(10, 6))
+        plt.subplot(2, 1, 1)
+        plt.plot(self.simulation.time, self.simulation.theta, label='Angle (rad)')
+        # plt.plot(self.simulation.time, self.simulation.thetadot, label='Angular velocity (rad/s)')
+        plt.title('Robot Angle and Angular Velocity')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Angle / Angular velocity')
+        plt.legend()
+        plt.grid(True)
+
+        plt.subplot(2, 1, 2)
+        # plt.plot(self.simulation.time, self.simulation.x, label='Position (m)')
+        plt.plot(self.simulation.time, self.simulation.xdot, label='Velocity (m/s)')
+        plt.title('Robot Position and Velocity')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Position / Velocity')
+        plt.legend()
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_torque_time(self):
+        plt.figure()  
+        #plt.scatter(self.simulation.time, self.simulation.torque)
+
+        #speed_range = np.linspace(min(self.simulation.xdot), max(self.simulation.xdot), 100)
+
+        # equation_torque1 = linear_equation(speed_range, m=simulation.motor.m / simulation.wheel_radius, c=simulation.motor.c)
+        # equation_torque2 = linear_equation(speed_range, m=-simulation.motor.m / simulation.wheel_radius, c=-simulation.motor.c) 
+        #plt.plot(speed_range, equation_torque1, label='motor power +ve limit', color='red', linestyle='--')
+        #plt.plot(speed_range, equation_torque2, label='motor power -ve limit', color='red', linestyle='--')
+
+        plt.subplot(2, 1, 1)
+        plt.scatter(self.simulation.time, self.simulation.torque, label='Torque (Nm)', color='blue')
+        plt.title('Torque and PWM vs Time')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Torque (Nm)')
+        plt.legend()
+        plt.grid(True)
+        
+        # Plot PWM vs time
+        plt.subplot(2, 1, 2)
+        plt.scatter(self.simulation.time, self.simulation.pwm, label='PWM', color='orange')
+        plt.xlabel('Time (s)')
+        plt.ylabel('PWM')
+        plt.legend()
+        plt.grid(True)
+
+        plt.tight_layout()
+
+
+        plt.show()
+
+
+simulation = Simulation(theta_0=0.5, time_total=1, motor=motor_12V_530RPM)
+
+KP = 10
+KD = 1
+
+simulation.run_simscipy(kp=KP,ki=0,kd=KD) # run the simulation using scipy
+simulation.torquescalculation(kp=KP,ki=0,kd=KD)
+#simulation.run_simulationmanual(kp=25,ki=0,kd=1)
+
+plot_options = PlottingOptions()
+plotter = Simulation_plotter (simulation, plot_options)
+plotter.create_animation()
+
+# To display the plots
+plotter.plot_results()
+#plotter.plot_torque_speed(m=-0.00170333, c=0.347826) #12v 1000rpm motor, requires clipping at 0.32
+plotter.plot_torque_time() #12v 530rpm motor, requires clipping at 0.52
+
+
+
+
+
+    
